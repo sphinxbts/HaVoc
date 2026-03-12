@@ -214,6 +214,59 @@ pub async fn ensure_board_index(state: &Arc<AppState>) {
     }
 }
 
+/// Seed a default welcome thread on fresh installs (zero threads in DB).
+pub async fn seed_welcome_thread(state: &Arc<AppState>) {
+    let thread_repo = hvoc_store::ThreadRepo(&state.store);
+    // Only seed if there are no threads at all.
+    if let Ok(threads) = thread_repo.list(1, 0).await {
+        if !threads.is_empty() {
+            return;
+        }
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let system_author = "system".to_string();
+    let thread_id = "welcome-thread-v1".to_string();
+
+    let thread = hvoc_core::Thread::new(
+        system_author.clone(),
+        "Welcome to HaVoc".to_string(),
+        now,
+        vec!["meta".to_string()],
+        thread_id.clone(),
+        vec![0u8; 64], // Dummy signature for system content.
+    );
+
+    let post = hvoc_core::Post::new(
+        system_author,
+        thread_id.clone(),
+        None,
+        concat!(
+            "Welcome to HaVoc — a peer-to-peer forum and encrypted messenger built on the Veilid network.\n\n",
+            "To get started:\n",
+            "1. Create an identity (top-right menu)\n",
+            "2. Start a new thread or reply to this one\n",
+            "3. Share your invite link to connect with others via encrypted DMs\n\n",
+            "All content is cryptographically signed and distributed via DHT. ",
+            "No central server, no tracking, no compromise.\n\n",
+            "Board index is bootstrapped from DNS at _hvoc-board.hvck.academy",
+        ).to_string(),
+        now,
+        "welcome-post-v1".to_string(),
+        vec![0u8; 64],
+    );
+
+    let _ = thread_repo.insert(&thread).await;
+    let post_repo = hvoc_store::PostRepo(&state.store);
+    if let Err(e) = post_repo.insert_with_attachment(&post, None).await {
+        tracing::warn!("Failed to seed welcome post: {e}");
+        return;
+    }
+    let _ = thread_repo.increment_post_count(&thread_id, now).await;
+
+    tracing::info!("Seeded welcome thread");
+}
+
 /// API: Get current board info (for sharing).
 pub async fn get_board_info(
     State(state): State<Arc<AppState>>,

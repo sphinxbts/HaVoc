@@ -77,8 +77,8 @@ pub async fn reconcile_from_dht(state: &Arc<AppState>) {
     let ks = hvoc_store::Keystore(&state.store);
 
     // Try to fetch the board index.
-    let record_key_str = match ks.get_dht_key(BOARD_LOGICAL_KEY).await {
-        Ok(Some((rk, _))) => rk,
+    let (record_key_str, owner_secret) = match ks.get_dht_key(BOARD_LOGICAL_KEY).await {
+        Ok(Some(v)) => v,
         _ => {
             tracing::info!("No board index DHT key found, skipping reconciliation");
             return;
@@ -95,14 +95,35 @@ pub async fn reconcile_from_dht(state: &Arc<AppState>) {
         Err(_) => return,
     };
 
-    let _ = hvoc_veilid::dht::open_record_readonly(&rc, record_key.clone()).await;
+    // Open the board record — writable if we have the secret, readonly otherwise.
+    let opened = if let Some(ref secret_str) = owner_secret {
+        if let Ok(writer) = secret_str.parse::<veilid_core::KeyPair>() {
+            hvoc_veilid::dht::open_record_writable(&rc, record_key.clone(), writer).await
+        } else {
+            hvoc_veilid::dht::open_record_readonly(&rc, record_key.clone()).await
+        }
+    } else {
+        hvoc_veilid::dht::open_record_readonly(&rc, record_key.clone()).await
+    };
+
+    if let Err(e) = opened {
+        tracing::info!("Board index not reachable yet (DHT may still be connecting): {e}");
+        return;
+    }
 
     // Read the board index entries.
     let entries = match hvoc_veilid::dht::get_value(&rc, record_key.clone(), 0, true).await {
         Ok(Some(data)) => {
             serde_json::from_slice::<Vec<serde_json::Value>>(&data).unwrap_or_default()
         }
-        _ => Vec::new(),
+        Ok(None) => {
+            tracing::info!("Board index is empty (no data written yet)");
+            Vec::new()
+        }
+        Err(e) => {
+            tracing::info!("Could not read board index: {e}");
+            Vec::new()
+        }
     };
 
     tracing::info!("Board index has {} entries", entries.len());
@@ -125,7 +146,9 @@ pub async fn reconcile_from_dht(state: &Arc<AppState>) {
 
         // Fetch thread from DHT.
         if let Ok(dht_key) = thread_dht_key.parse::<veilid_core::RecordKey>() {
-            let _ = hvoc_veilid::dht::open_record_readonly(&rc, dht_key.clone()).await;
+            if hvoc_veilid::dht::open_record_readonly(&rc, dht_key.clone()).await.is_err() {
+                continue;
+            }
 
             // Fetch thread header (subkey 0).
             if let Ok(Some(data)) = hvoc_veilid::dht::get_value(&rc, dht_key.clone(), 0, true).await {
@@ -136,16 +159,8 @@ pub async fn reconcile_from_dht(state: &Arc<AppState>) {
                     // Fetch post index (subkey 1).
                     if let Ok(Some(index_data)) = hvoc_veilid::dht::get_value(&rc, dht_key.clone(), 1, true).await {
                         if let Ok(post_ids) = serde_json::from_slice::<Vec<String>>(&index_data) {
-                            // Fetch each post.
-                            for post_id in &post_ids {
-                                let post_logical = format!("post:{}", post_id);
-                                // We need to find the post's DHT key — check if it's in our board entries.
-                                // For now, skip individual post fetch since we'd need a separate post registry.
-                                let _ = post_logical; // Acknowledge we can't resolve this yet.
-                            }
-
-                            // Update post count.
                             let _ = thread_repo.increment_post_count(thread_id, chrono::Utc::now().timestamp()).await;
+                            let _ = post_ids; // Individual post fetch requires a post registry.
                         }
                     }
                 }

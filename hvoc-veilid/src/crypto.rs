@@ -167,6 +167,48 @@ pub fn verify_object(
     verify(cs, author_key, signable_bytes, signature_bytes)
 }
 
+// ─── DB encryption at rest ──────────────────────────────────────────────────
+
+/// Encrypt a blob (DB file) using XChaCha20-Poly1305.
+/// Output format: [24-byte nonce][ciphertext+tag]
+pub fn encrypt_blob(
+    cs: &(dyn CryptoSystem + Send + Sync),
+    key: &veilid_core::SharedSecret,
+    data: &[u8],
+) -> Result<Vec<u8>, VeilidError> {
+    let nonce = cs.random_nonce();
+    let ciphertext = cs
+        .encrypt_aead(data, &nonce, key, None)
+        .map_err(|e| VeilidError::Crypto(format!("encrypt_aead: {e}")))?;
+    let mut out = Vec::with_capacity(24 + ciphertext.len());
+    out.extend_from_slice(nonce.as_ref());
+    out.extend(ciphertext);
+    Ok(out)
+}
+
+/// Decrypt a blob produced by encrypt_blob.
+pub fn decrypt_blob(
+    cs: &(dyn CryptoSystem + Send + Sync),
+    key: &veilid_core::SharedSecret,
+    data: &[u8],
+) -> Result<Vec<u8>, VeilidError> {
+    if data.len() < 24 {
+        return Err(VeilidError::Crypto("encrypted blob too short".into()));
+    }
+    let nonce = Nonce::try_from(&data[..24])
+        .map_err(|e| VeilidError::Crypto(format!("invalid nonce: {e}")))?;
+    let ciphertext = &data[24..];
+    cs.decrypt_aead(ciphertext, &nonce, key, None)
+        .map_err(|e| VeilidError::Crypto(format!("decrypt_aead: {e}")))
+}
+
+/// Generate a random 32-byte shared secret for DB encryption.
+pub fn generate_db_key(
+    cs: &(dyn CryptoSystem + Send + Sync),
+) -> veilid_core::SharedSecret {
+    cs.random_shared_secret()
+}
+
 // ─── DM encryption ──────────────────────────────────────────────────────────
 
 /// Encrypted DM envelope for wire transport.

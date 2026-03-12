@@ -43,6 +43,10 @@ impl Store {
         let conn = tokio::task::spawn_blocking(move || -> Result<Connection, StoreError> {
             let conn = Connection::open(&path)?;
             conn.execute_batch(migrations::SCHEMA)?;
+            // Migration: add visibility column to existing threads tables.
+            let _ = conn.execute_batch(
+                "ALTER TABLE threads ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';"
+            );
             Ok(conn)
         })
         .await
@@ -56,5 +60,13 @@ impl Store {
     /// Get a reference to the inner connection (for repo operations).
     pub(crate) fn conn(&self) -> &Arc<Mutex<Connection>> {
         &self.conn
+    }
+
+    /// Force a WAL checkpoint — flushes all WAL data into the main DB file.
+    /// Call this before reading the raw DB file for encryption.
+    pub async fn checkpoint(&self) -> Result<(), StoreError> {
+        let conn = self.conn.lock().await;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(())
     }
 }

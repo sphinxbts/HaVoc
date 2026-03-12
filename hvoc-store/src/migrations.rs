@@ -31,11 +31,14 @@ CREATE TABLE IF NOT EXISTS threads (
     author_id       TEXT NOT NULL,
     title           TEXT NOT NULL,
     tags            TEXT NOT NULL DEFAULT '[]',
+    visibility      TEXT NOT NULL DEFAULT 'public',
     created_at      INTEGER NOT NULL,
     post_count      INTEGER NOT NULL DEFAULT 0,
     last_post_at    INTEGER,
     raw_json        TEXT NOT NULL
 );
+
+
 CREATE INDEX IF NOT EXISTS threads_author  ON threads(author_id);
 CREATE INDEX IF NOT EXISTS threads_created ON threads(created_at DESC);
 

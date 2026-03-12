@@ -178,6 +178,7 @@ nav { flex: 1; padding-top: 8px; }
   transition: all 120ms ease-out;
 }
 .btn-ghost:hover { border-color: var(--border-default); color: var(--text-primary); }
+.tab-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 .btn-danger {
   background: transparent;
   border: 1px solid rgba(255,59,59,0.2);
@@ -604,9 +605,17 @@ svg { display: inline-block; vertical-align: middle; }
         <div class="panel-header">
           <span class="panel-label" id="forum-header-label">THREAD INDEX</span>
           <div class="header-actions">
+            <div class="tab-group" style="display:flex; gap:2px; margin-right:6px;">
+              <button class="btn-ghost tab-btn active" id="tab-public" style="font-size:9px; padding:3px 8px;">PUBLIC</button>
+              <button class="btn-ghost tab-btn" id="tab-private" style="font-size:9px; padding:3px 8px;">PRIVATE</button>
+            </div>
             <input id="forum-search" class="ctrl" type="text" placeholder="Search…" style="width:140px; font-size:10px; padding:4px 8px;" autocomplete="off" />
             <button class="btn-icon" id="forum-refresh-btn" title="Refresh">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+            <button class="btn-ghost" id="join-thread-btn" title="Join private thread" style="font-size:9px; padding:3px 8px;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+              JOIN
             </button>
             <button class="btn" id="new-thread-btn">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -640,6 +649,15 @@ svg { display: inline-block; vertical-align: middle; }
             <div class="field-label">CONTENT</div>
             <textarea id="nt-content" class="ctrl" style="flex:1; min-height:200px;" placeholder="Opening post…"></textarea>
           </div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div class="field-label" style="margin:0;">VISIBILITY</div>
+            <label style="display:flex; align-items:center; gap:4px; font-size:10px; cursor:pointer; color:var(--text-secondary);">
+              <input type="radio" name="nt-visibility" value="public" checked style="accent-color:var(--accent);" /> PUBLIC
+            </label>
+            <label style="display:flex; align-items:center; gap:4px; font-size:10px; cursor:pointer; color:var(--text-secondary);">
+              <input type="radio" name="nt-visibility" value="private" style="accent-color:var(--accent);" /> PRIVATE
+            </label>
+          </div>
           <div class="form-actions">
             <button class="btn" id="nt-submit">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -659,7 +677,14 @@ svg { display: inline-block; vertical-align: middle; }
             </button>
             <span id="thread-title-label" class="panel-label" style="color:var(--text-primary); font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></span>
           </div>
-          <span id="thread-post-count" class="panel-label"></span>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span id="thread-visibility-badge" style="display:none; font-size:8px; padding:2px 6px; border-radius:3px; border:1px solid var(--border-default); color:var(--text-secondary); text-transform:uppercase;"></span>
+            <button class="btn-ghost" id="thread-invite-btn" style="display:none; font-size:9px; padding:3px 8px;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+              INVITE
+            </button>
+            <span id="thread-post-count" class="panel-label"></span>
+          </div>
         </div>
         <div id="post-list" class="scroll"></div>
         <div class="reply-box">
@@ -1180,15 +1205,17 @@ const dbAPI = {
     return r.identities || [];
   },
 
-  async getThreads(limit = 50, offset = 0, query = '') {
+  async getThreads(limit = 50, offset = 0, query = '', visibility = 'public') {
     const q = query ? `&q=${encodeURIComponent(query)}` : '';
-    const r = await api('GET', `/api/threads?limit=${limit}&offset=${offset}${q}`);
+    const vis = visibility ? `&visibility=${visibility}` : '';
+    const r = await api('GET', `/api/threads?limit=${limit}&offset=${offset}${q}${vis}`);
     return (r.threads || []).map(t => ({
       id: t.object_id,
       title: t.title,
       author: t.author_id,
       createdAt: t.created_at * 1000,
       postCount: t.post_count,
+      visibility: t.visibility || 'public',
     }));
   },
   async getThread(id) {
@@ -1200,6 +1227,7 @@ const dbAPI = {
       title: tr.thread.title,
       author: tr.thread.author_id,
       createdAt: tr.thread.created_at * 1000,
+      visibility: tr.thread.visibility || 'public',
     };
     const posts = (pr.posts || []).map(p => ({
       id: p.object_id,
@@ -1211,10 +1239,20 @@ const dbAPI = {
     }));
     return { thread, posts };
   },
-  async createThread(title, body) {
-    const r = await api('POST', '/api/threads', { title, body, tags: [] });
+  async createThread(title, body, visibility = 'public') {
+    const r = await api('POST', '/api/threads', { title, body, tags: [], visibility });
     if (r.error) throw new Error(r.error);
     return r.thread_id;
+  },
+  async getThreadInvite(threadId) {
+    const r = await api('GET', `/api/threads/${threadId}/invite`);
+    if (r.error) throw new Error(r.error);
+    return r;
+  },
+  async joinThread(invite) {
+    const r = await api('POST', '/api/threads/join', { invite });
+    if (r.error) throw new Error(r.error);
+    return r;
   },
   async createPost(threadId, body, attachmentMeta) {
     const payload = { body };
@@ -1389,6 +1427,7 @@ let activeThreadId = null;
 let activeContact  = null;
 let showNewChannel = false;
 let msgBadgeInterval = null;
+let forumVisibilityTab = 'public';
 
 // ─── View routing ─────────────────────────────────────────────────────────────
 const VIEWS = ['forum', 'new-thread', 'thread', 'messages', 'profile'];
@@ -1410,28 +1449,35 @@ async function loadForum() {
   showView('forum');
   const offset = threadPage * PAGE_SIZE;
   const searchQuery = (document.getElementById('forum-search')?.value || '').trim();
-  const threads = await dbAPI.getThreads(PAGE_SIZE + 1, offset, searchQuery);
+  const threads = await dbAPI.getThreads(PAGE_SIZE + 1, offset, searchQuery, forumVisibilityTab);
+  // Update tab active state
+  document.getElementById('tab-public').classList.toggle('active', forumVisibilityTab === 'public');
+  document.getElementById('tab-private').classList.toggle('active', forumVisibilityTab === 'private');
+  document.getElementById('forum-header-label').textContent = forumVisibilityTab === 'private' ? 'PRIVATE THREADS' : 'THREAD INDEX';
   const hasMore = threads.length > PAGE_SIZE;
   const page = threads.slice(0, PAGE_SIZE);
 
   const el = document.getElementById('thread-list');
-  document.getElementById('forum-header-label').textContent = `THREAD INDEX`;
 
   // Resolve handles for thread authors.
   const authorIds = page.map(t => t.author).filter(Boolean);
   await resolveHandles(authorIds);
 
   if (page.length === 0) {
-    el.innerHTML = '<div class="empty">NO THREADS. CREATE THE FIRST.</div>';
+    const emptyMsg = forumVisibilityTab === 'private'
+      ? 'NO PRIVATE THREADS. CREATE ONE OR JOIN VIA INVITE.'
+      : 'NO THREADS. CREATE THE FIRST.';
+    el.innerHTML = `<div class="empty">${emptyMsg}</div>`;
     document.getElementById('thread-pagination').style.display = 'none';
     return;
   }
 
   el.innerHTML = page.map(t => {
     const mine = t.author === currentUser.publicKey;
+    const visBadge = t.visibility === 'private' ? '<span style="font-size:8px; padding:1px 5px; border-radius:3px; border:1px solid rgba(255,180,0,0.3); color:rgba(255,180,0,0.7); margin-left:6px;">PRIVATE</span>' : '';
     return `
       <div class="thread-item" data-id="${esc(t.id)}">
-        <div class="thread-title">${esc(t.title)}</div>
+        <div class="thread-title">${esc(t.title)}${visBadge}</div>
         <div class="thread-meta">
           <span class="author ${mine ? 'me' : ''}">${displayName(t.author, mine)}</span>
           <span class="ts">${relTime(t.createdAt)}</span>
@@ -1466,6 +1512,20 @@ async function loadThread(threadId) {
   document.getElementById('thread-title-label').textContent = thread.title;
   document.getElementById('thread-post-count').textContent  = `${posts.length} POSTS`;
   document.getElementById('reply-text').value = '';
+
+  // Show/hide invite button and visibility badge for private threads
+  const inviteBtn = document.getElementById('thread-invite-btn');
+  const visBadge = document.getElementById('thread-visibility-badge');
+  if (thread.visibility === 'private') {
+    inviteBtn.style.display = '';
+    visBadge.style.display = '';
+    visBadge.textContent = 'PRIVATE';
+    visBadge.style.borderColor = 'rgba(255,180,0,0.3)';
+    visBadge.style.color = 'rgba(255,180,0,0.7)';
+  } else {
+    inviteBtn.style.display = 'none';
+    visBadge.style.display = 'none';
+  }
 
   // Resolve handles for post authors.
   const authorIds = posts.map(p => p.author).filter(Boolean);
@@ -1772,18 +1832,54 @@ document.getElementById('nt-submit').addEventListener('click', async () => {
   const title = document.getElementById('nt-title').value.trim();
   const body  = document.getElementById('nt-content').value.trim();
   if (!title || !body) return;
+  const visibility = document.querySelector('input[name="nt-visibility"]:checked')?.value || 'public';
   const btn = document.getElementById('nt-submit');
   btn.disabled = true;
   try {
-    await dbAPI.createThread(title, body);
+    await dbAPI.createThread(title, body, visibility);
   } catch (e) {
     toast(e.message);
   }
   btn.disabled = false;
+  if (visibility === 'private') forumVisibilityTab = 'private';
   loadForum();
 });
 document.getElementById('nt-title').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('nt-content').focus();
+});
+
+// Tab switcher: public / private threads
+document.getElementById('tab-public').addEventListener('click', () => {
+  forumVisibilityTab = 'public'; threadPage = 0; loadForum();
+});
+document.getElementById('tab-private').addEventListener('click', () => {
+  forumVisibilityTab = 'private'; threadPage = 0; loadForum();
+});
+
+// Join private thread by invite string
+document.getElementById('join-thread-btn').addEventListener('click', async () => {
+  const invite = prompt('Paste invite link (hvoc-thread:VLD0:...):');
+  if (!invite || !invite.trim()) return;
+  try {
+    const r = await dbAPI.joinThread(invite.trim());
+    toast('Joined thread!', 'success');
+    forumVisibilityTab = 'private';
+    loadForum();
+  } catch (e) {
+    toast(e.message);
+  }
+});
+
+// Copy invite link for private threads
+document.getElementById('thread-invite-btn').addEventListener('click', async () => {
+  if (!activeThreadId) return;
+  try {
+    const r = await dbAPI.getThreadInvite(activeThreadId);
+    await navigator.clipboard.writeText(r.invite);
+    toast('Invite link copied!', 'success');
+  } catch (e) {
+    toast(e.message);
+  }
 });
 
 // Thread reply — attachment state

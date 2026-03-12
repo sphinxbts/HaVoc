@@ -70,8 +70,10 @@ pub async fn serve(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()>
         .route("/api/identity/list", get(handlers::identity::list_identities))
         // Forum
         .route("/api/threads", get(handlers::forum::list_threads).post(handlers::forum::create_thread))
+        .route("/api/threads/join", post(handlers::forum::join_thread))
         .route("/api/threads/:id", get(handlers::forum::get_thread).delete(handlers::forum::delete_thread))
         .route("/api/threads/:id/posts", get(handlers::forum::list_posts).post(handlers::forum::create_post))
+        .route("/api/threads/:id/invite", get(handlers::forum::get_thread_invite))
         .route("/api/posts/:id", delete(handlers::forum::delete_post))
         // Messages
         .route("/api/messages", get(handlers::messages::list_messages).post(handlers::messages::send_message))
@@ -89,15 +91,22 @@ pub async fn serve(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()>
         .layer(cors)
         .with_state(state.clone());
 
-    // Spawn board bootstrap + reconciliation.
+    // Spawn board bootstrap + periodic reconciliation.
     let sync_state = state.clone();
     tokio::spawn(async move {
         // Wait a bit for the node to attach.
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        // Seed welcome thread on fresh installs.
+        handlers::board::seed_welcome_thread(&sync_state).await;
         // Ensure board index exists (DNS/env/local/create).
         handlers::board::ensure_board_index(&sync_state).await;
-        // Then reconcile threads from it.
+        // Initial reconciliation.
         handlers::sync::reconcile_from_dht(&sync_state).await;
+        // Re-reconcile every 60 seconds to pick up new threads from other nodes.
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+            handlers::sync::reconcile_from_dht(&sync_state).await;
+        }
     });
 
     // Spawn incoming DM handler.

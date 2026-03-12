@@ -11,6 +11,7 @@ pub struct ThreadRow {
     pub author_id: String,
     pub title: String,
     pub tags: String,
+    pub visibility: String,
     pub created_at: i64,
     pub post_count: i64,
     pub last_post_at: Option<i64>,
@@ -20,20 +21,25 @@ pub struct ThreadRepo<'a>(pub &'a Store);
 
 impl<'a> ThreadRepo<'a> {
     pub async fn insert(&self, thread: &hvoc_core::Thread) -> Result<(), StoreError> {
+        self.insert_with_visibility(thread, "public").await
+    }
+
+    pub async fn insert_with_visibility(&self, thread: &hvoc_core::Thread, visibility: &str) -> Result<(), StoreError> {
         let raw_json = serde_json::to_string(thread)?;
         let tags_json = serde_json::to_string(&thread.tags)?;
         let object_id = thread.object_id.clone();
         let author_id = thread.author_id.clone();
         let title = thread.title.clone();
         let created_at = thread.created_at;
+        let visibility = visibility.to_string();
         let conn = self.0.conn().clone();
 
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
             conn.execute(
-                "INSERT OR REPLACE INTO threads (object_id, author_id, title, tags, created_at, post_count, raw_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
-                rusqlite::params![object_id, author_id, title, tags_json, created_at, raw_json],
+                "INSERT OR REPLACE INTO threads (object_id, author_id, title, tags, visibility, created_at, post_count, raw_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)",
+                rusqlite::params![object_id, author_id, title, tags_json, visibility, created_at, raw_json],
             )?;
             Ok::<_, StoreError>(())
         })
@@ -48,7 +54,7 @@ impl<'a> ThreadRepo<'a> {
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
             let mut stmt = conn.prepare(
-                "SELECT object_id, author_id, title, tags, created_at, post_count, last_post_at
+                "SELECT object_id, author_id, title, tags, visibility, created_at, post_count, last_post_at
                  FROM threads WHERE object_id = ?1",
             )?;
             stmt.query_row(rusqlite::params![object_id], |row| {
@@ -57,9 +63,10 @@ impl<'a> ThreadRepo<'a> {
                     author_id: row.get(1)?,
                     title: row.get(2)?,
                     tags: row.get(3)?,
-                    created_at: row.get(4)?,
-                    post_count: row.get(5)?,
-                    last_post_at: row.get(6)?,
+                    visibility: row.get(4)?,
+                    created_at: row.get(5)?,
+                    post_count: row.get(6)?,
+                    last_post_at: row.get(7)?,
                 })
             })
             .map_err(|_| StoreError::NotFound(format!("thread {}", object_id)))
@@ -74,8 +81,8 @@ impl<'a> ThreadRepo<'a> {
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
             let mut stmt = conn.prepare(
-                "SELECT object_id, author_id, title, tags, created_at, post_count, last_post_at
-                 FROM threads ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+                "SELECT object_id, author_id, title, tags, visibility, created_at, post_count, last_post_at
+                 FROM threads WHERE visibility = 'public' ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
             )?;
             let rows = stmt
                 .query_map(rusqlite::params![limit, offset], |row| {
@@ -84,9 +91,40 @@ impl<'a> ThreadRepo<'a> {
                         author_id: row.get(1)?,
                         title: row.get(2)?,
                         tags: row.get(3)?,
-                        created_at: row.get(4)?,
-                        post_count: row.get(5)?,
-                        last_post_at: row.get(6)?,
+                        visibility: row.get(4)?,
+                        created_at: row.get(5)?,
+                        post_count: row.get(6)?,
+                        last_post_at: row.get(7)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok::<_, StoreError>(rows)
+        })
+        .await
+        .map_err(|e| StoreError::Task(e.to_string()))?
+    }
+
+    /// List private threads the user has locally (invited or created).
+    pub async fn list_private(&self, limit: i64, offset: i64) -> Result<Vec<ThreadRow>, StoreError> {
+        let conn = self.0.conn().clone();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+            let mut stmt = conn.prepare(
+                "SELECT object_id, author_id, title, tags, visibility, created_at, post_count, last_post_at
+                 FROM threads WHERE visibility = 'private' ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![limit, offset], |row| {
+                    Ok(ThreadRow {
+                        object_id: row.get(0)?,
+                        author_id: row.get(1)?,
+                        title: row.get(2)?,
+                        tags: row.get(3)?,
+                        visibility: row.get(4)?,
+                        created_at: row.get(5)?,
+                        post_count: row.get(6)?,
+                        last_post_at: row.get(7)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -116,8 +154,8 @@ impl<'a> ThreadRepo<'a> {
         tokio::task::spawn_blocking(move || {
             let conn = conn.blocking_lock();
             let mut stmt = conn.prepare(
-                "SELECT object_id, author_id, title, tags, created_at, post_count, last_post_at
-                 FROM threads WHERE title LIKE ?1 OR tags LIKE ?1 ORDER BY created_at DESC LIMIT ?2",
+                "SELECT object_id, author_id, title, tags, visibility, created_at, post_count, last_post_at
+                 FROM threads WHERE visibility = 'public' AND (title LIKE ?1 OR tags LIKE ?1) ORDER BY created_at DESC LIMIT ?2",
             )?;
             let rows = stmt
                 .query_map(rusqlite::params![query, limit], |row| {
@@ -126,9 +164,10 @@ impl<'a> ThreadRepo<'a> {
                         author_id: row.get(1)?,
                         title: row.get(2)?,
                         tags: row.get(3)?,
-                        created_at: row.get(4)?,
-                        post_count: row.get(5)?,
-                        last_post_at: row.get(6)?,
+                        visibility: row.get(4)?,
+                        created_at: row.get(5)?,
+                        post_count: row.get(6)?,
+                        last_post_at: row.get(7)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
