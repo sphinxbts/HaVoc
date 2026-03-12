@@ -21,6 +21,14 @@ use tower_http::cors::{Any, CorsLayer};
 use hvoc_store::Store;
 use hvoc_veilid::HvocNode;
 
+/// In-memory call state (no persistence needed).
+pub struct CallState {
+    /// Peer we're currently in a call with (their author_id).
+    pub active_peer: Option<String>,
+    /// When the call started (unix timestamp).
+    pub started_at: Option<i64>,
+}
+
 /// Shared application state.
 pub struct AppState {
     pub store: Store,
@@ -31,6 +39,8 @@ pub struct AppState {
     pub author_id: RwLock<Option<String>>,
     /// Data directory path (for attachments, etc.).
     pub data_dir: std::path::PathBuf,
+    /// Active call state.
+    pub call_state: RwLock<CallState>,
 }
 
 /// Embedded frontend HTML (bundled at compile time).

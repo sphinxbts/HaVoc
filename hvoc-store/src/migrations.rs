@@ -107,4 +107,10 @@ CREATE TABLE IF NOT EXISTS board_index (
     added_at        INTEGER NOT NULL,
     PRIMARY KEY (board_name, thread_id)
 );
+
+-- Metadata key-value store for bootstrap versioning and store-level state
+CREATE TABLE IF NOT EXISTS metadata (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 "#;

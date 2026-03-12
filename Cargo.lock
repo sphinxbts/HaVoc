@@ -1781,6 +1781,7 @@ dependencies = [
  "blake3",
  "chrono",
  "futures",
+ "hex",
  "hvoc-core",
  "hvoc-store",
  "hvoc-veilid",
@@ -1819,9 +1820,11 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "chrono",
+ "ed25519-dalek",
  "hex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
 ]
 
@@ -3961,6 +3964,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
  "digest 0.10.7",
+ "rand_core 0.6.4",
 ]
 
 [[package]]

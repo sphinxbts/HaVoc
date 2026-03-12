@@ -150,12 +150,21 @@ async fn main() -> Result<()> {
 
             let store = hvoc_store::Store::open(&db_path).await?;
 
+            // Bootstrap seed threads on first run.
+            if let Err(e) = hvoc_store::bootstrap::bootstrap_if_needed(&store).await {
+                tracing::warn!("Bootstrap failed: {e}");
+            }
+
             let state = Arc::new(hvoc_api::AppState {
                 store,
                 node,
                 keypair: RwLock::new(None),
                 author_id: RwLock::new(None),
                 data_dir: data_dir.clone(),
+                call_state: RwLock::new(hvoc_api::CallState {
+                    active_peer: None,
+                    started_at: None,
+                }),
             });
 
             // Auto-open browser after a short delay.

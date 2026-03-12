@@ -211,6 +211,16 @@ pub async fn handle_incoming_dm(state: &Arc<AppState>, payload: &[u8]) {
         }
     };
 
+    // If this is a call packet (video frame, audio chunk, or signaling),
+    // broadcast it to the frontend via WebSocket instead of storing it.
+    if let Some(call_pkt) = dm_payload.call_packet {
+        state.node.broadcast_sync(hvoc_veilid::SyncEvent::CallPacketReceived {
+            sender_id: envelope.sender_id.clone(),
+            packet: call_pkt,
+        });
+        return;
+    }
+
     // Store decrypted message.
     let my_id = hvoc_veilid::crypto::author_id_from_key(&kp.key());
     let object_id = format!("dm-{}-{}", envelope.sender_id, envelope.sent_at);

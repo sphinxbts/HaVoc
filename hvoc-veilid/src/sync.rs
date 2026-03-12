@@ -27,4 +27,11 @@ pub enum SyncEvent {
     RouteDied {
         dead_routes: Vec<String>,
     },
+
+    /// A real-time call packet arrived (video frame, audio chunk, or signaling).
+    /// Forwarded to the frontend via WebSocket instead of being stored.
+    CallPacketReceived {
+        sender_id: String,
+        packet: serde_json::Value,
+    },
 }

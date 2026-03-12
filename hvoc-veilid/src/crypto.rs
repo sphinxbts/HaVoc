@@ -234,6 +234,7 @@ pub fn encrypt_dm(
     let payload = DmPayload {
         body: body.to_string(),
         sent_at: now,
+        call_packet: None,
     };
     let plaintext = serde_json::to_vec(&payload)
         .map_err(|e| VeilidError::Crypto(format!("serialize DM payload: {e}")))?;

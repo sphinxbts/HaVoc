@@ -131,6 +131,7 @@ nav { flex: 1; padding-top: 8px; }
 }
 .view { display: flex; flex-direction: column; height: 100%; }
 .view.hidden { display: none; }
+.hidden { display: none !important; }
 
 /* ── Panel Header ───────────────────────────────────────────────────────── */
 .panel-header {
@@ -350,6 +351,54 @@ textarea.ctrl { resize: vertical; min-height: 90px; line-height: 1.6; padding: 1
 .send-box  { padding: 12px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
 .send-row  { display: flex; gap: 8px; }
 .send-row textarea { flex: 1; min-height: 56px; }
+
+/* ── Video Call Overlay ────────────────────────────────────────────────── */
+.call-overlay {
+  position: absolute; inset: 0; z-index: 100;
+  background: var(--bg-root);
+  display: flex; flex-direction: column;
+}
+.call-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface);
+}
+.call-peer-label { font-size: 11px; color: var(--accent); letter-spacing: 1px; font-weight: 600; }
+.call-controls { display: flex; gap: 8px; }
+.call-controls .btn { font-size: 9px; padding: 4px 10px; }
+.call-controls .btn.active-ctrl { background: var(--accent); color: var(--bg-root); }
+.call-video-area {
+  flex: 1; display: flex; flex-direction: column; position: relative;
+  overflow: hidden; background: #000;
+}
+.ascii-display {
+  overflow: hidden; padding: 0; margin: 0;
+  background: #000; position: relative;
+}
+.ascii-display canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+.ascii-remote { flex: 1; display: flex; align-items: center; justify-content: center; }
+.ascii-remote canvas { width: 100%; height: 100%; object-fit: contain; }
+.ascii-local {
+  position: absolute; bottom: 8px; right: 8px;
+  width: 28%; max-height: 30%;
+  border: 1px solid var(--border-default);
+  background: rgba(0,0,0,0.85);
+}
+.ascii-local canvas { width: 100%; height: auto; }
+.call-incoming {
+  position: absolute; inset: 0; z-index: 110;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(8,11,16,0.95); gap: 16px;
+}
+.call-incoming .call-caller { font-size: 14px; color: var(--accent); letter-spacing: 2px; }
+.call-incoming .call-ring { font-size: 10px; color: var(--text-secondary); animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.call-incoming .call-actions { display: flex; gap: 12px; }
+.call-btn-start { font-size: 10px; color: var(--accent); }
 
 /* ── Profile ────────────────────────────────────────────────────────────── */
 .profile-content { padding: 20px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; }
@@ -725,9 +774,37 @@ svg { display: inline-block; vertical-align: middle; }
             <div id="contact-list" class="scroll"></div>
           </div>
           <!-- Message thread -->
-          <div class="msg-thread">
+          <div class="msg-thread" style="position:relative;">
             <div class="panel-header">
               <span id="msg-header-label" class="panel-label">SELECT A CONTACT OR PRESS + TO START NEW</span>
+              <button class="btn-icon" id="call-start-btn" title="Start video call" style="display:none;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+                CALL
+              </button>
+            </div>
+            <!-- Call overlay (shown during active call) -->
+            <div id="call-overlay" class="call-overlay hidden">
+              <div class="call-header">
+                <span id="call-peer-label" class="call-peer-label">CALLING...</span>
+                <div class="call-controls">
+                  <button class="btn" id="call-mic-btn" title="Toggle mic">MIC</button>
+                  <button class="btn" id="call-vid-btn" title="Toggle video">VID</button>
+                  <button class="btn" id="call-end-btn" title="End call" style="border-color:var(--critical);color:var(--critical);">END</button>
+                </div>
+              </div>
+              <div class="call-video-area">
+                <pre id="remote-ascii" class="ascii-display ascii-remote"></pre>
+                <pre id="local-ascii" class="ascii-display ascii-local"></pre>
+              </div>
+            </div>
+            <!-- Incoming call banner -->
+            <div id="call-incoming" class="call-incoming hidden">
+              <div class="call-ring">INCOMING CALL</div>
+              <div id="call-caller" class="call-caller"></div>
+              <div class="call-actions">
+                <button class="btn" id="call-accept-btn" style="border-color:var(--accent);color:var(--accent);">ACCEPT</button>
+                <button class="btn" id="call-decline-btn" style="border-color:var(--critical);color:var(--critical);">DECLINE</button>
+              </div>
             </div>
             <div id="msg-list" class="msg-list"></div>
             <div class="send-box">
@@ -1344,6 +1421,9 @@ function handleSyncEvent(event) {
       new Notification('HVOC — New Message', { body: 'You received a new encrypted message.', icon: undefined });
     }
   }
+  if (event.CallPacketReceived) {
+    handleCallPacket(event.CallPacketReceived.sender_id, event.CallPacketReceived.packet);
+  }
 }
 
 function updateNodeStatus() {
@@ -1611,14 +1691,17 @@ async function renderMsgThread() {
   const headerEl = document.getElementById('msg-header-label');
   const listEl   = document.getElementById('msg-list');
 
+  const callBtn = document.getElementById('call-start-btn');
   if (showNewChannel) {
     headerEl.textContent = 'NEW CHANNEL';
     document.getElementById('recipient-row').style.display = 'block';
+    callBtn.style.display = 'none';
     listEl.innerHTML = '';
     return;
   }
   if (!activeContact) {
     headerEl.textContent = 'SELECT A CONTACT OR PRESS + TO START NEW';
+    callBtn.style.display = 'none';
     listEl.innerHTML = '';
     return;
   }
@@ -1626,6 +1709,8 @@ async function renderMsgThread() {
   const contactName = handleCache[activeContact] || truncKey(activeContact);
   headerEl.textContent = `CHANNEL: ${contactName}`;
   document.getElementById('recipient-row').style.display = 'none';
+  // Show call button when viewing a contact (hide during active call)
+  callBtn.style.display = (callState === 'idle') ? '' : 'none';
 
   const thread = await dbAPI.getMessages(activeContact);
 
@@ -2039,7 +2124,526 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   activeContact  = null;
   showNewChannel = false;
   if (ws) { try { ws.close(); } catch (_) {} ws = null; }
+  callEndCleanup();
   showRegistration();
+});
+
+// ─── ASCII Video Call ─────────────────────────────────────────────────────────
+// Extended ramp for finer brightness detail (70 levels)
+const ASCII_CHARS = ' `.-\':_,^=;><+!rc*/z?sLTv)J7(|Fi{C}fI31tlu[neoZ5Yxjya]2ESwqkP6h9d4VpOGbUAKXHm8RD#$Bg0MNWQ%&@';
+const CALL_WIDTH = 80, CALL_HEIGHT = 50, CALL_FPS = 8;
+let callState = 'idle'; // idle | ringing | incoming | in_call
+let callPeer = null;
+let callStream = null;    // MediaStream from getUserMedia
+let callVideoEl = null;   // hidden <video> for capture
+let callCanvas = null;    // offscreen canvas
+let callCtx = null;
+let callFrameTimer = null;
+let callAudioCtx = null;
+let callAudioProcessor = null;
+let callAudioSource = null;
+let callAudioSeq = 0;
+let callMicOn = true;
+let callVidOn = true;
+
+// Jitter buffer for incoming audio
+let callPlaybackCtx = null;
+let callJitterBuf = [];
+let callPlaybackSeq = 0;
+let callPlaybackTimer = null;
+
+function sendCallPacket(pkt) {
+  pkt.peer = callPeer;
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(pkt));
+}
+
+function handleCallPacket(senderId, pkt) {
+  const t = pkt.t;
+  if (t === 'call_offer') {
+    if (callState === 'idle') {
+      callPeer = senderId;
+      callState = 'incoming';
+      showIncomingCall(senderId);
+    }
+  } else if (t === 'call_answer') {
+    if (callState === 'ringing') {
+      callState = 'in_call';
+      startMediaStreaming();
+    }
+  } else if (t === 'call_reject' || t === 'call_end') {
+    callEndCleanup();
+    toast('Call ended', 'success');
+  } else if (t === 'vf' || t === 'vd') {
+    renderRemoteFrame(pkt);
+  } else if (t === 'af') {
+    enqueueCallAudio(pkt);
+  }
+}
+
+function showIncomingCall(senderId) {
+  const name = handleCache[senderId] || truncKey(senderId);
+  document.getElementById('call-caller').textContent = name;
+  document.getElementById('call-incoming').classList.remove('hidden');
+  // Play a notification
+  if (document.hidden && Notification.permission === 'granted') {
+    new Notification('HVOC — Incoming Call', { body: `${name} is calling you` });
+  }
+}
+
+async function startCall(peerId) {
+  callPeer = peerId;
+  callState = 'ringing';
+  const name = handleCache[peerId] || truncKey(peerId);
+  document.getElementById('call-peer-label').textContent = `CALLING ${name}...`;
+  document.getElementById('call-overlay').classList.remove('hidden');
+  document.getElementById('call-start-btn').style.display = 'none';
+
+  // Request media
+  try {
+    await initCallMedia();
+    startLocalPreview();
+  } catch (e) {
+    toast('Camera/mic access denied: ' + e.message);
+    callEndCleanup();
+    return;
+  }
+
+  sendCallPacket({ t: 'call_offer' });
+}
+
+async function acceptCall() {
+  document.getElementById('call-incoming').classList.add('hidden');
+  callState = 'in_call';
+  const name = handleCache[callPeer] || truncKey(callPeer);
+  document.getElementById('call-peer-label').textContent = `CALL: ${name}`;
+  document.getElementById('call-overlay').classList.remove('hidden');
+  document.getElementById('call-start-btn').style.display = 'none';
+
+  try {
+    await initCallMedia();
+    startLocalPreview();
+  } catch (e) {
+    toast('Camera/mic access denied: ' + e.message);
+    callEndCleanup();
+    return;
+  }
+
+  sendCallPacket({ t: 'call_answer' });
+  startMediaStreaming();
+}
+
+function declineCall() {
+  sendCallPacket({ t: 'call_reject' });
+  callEndCleanup();
+}
+
+function endCall() {
+  sendCallPacket({ t: 'call_end' });
+  callEndCleanup();
+}
+
+function callEndCleanup() {
+  callState = 'idle';
+  callPeer = null;
+
+  // Stop media
+  if (callStream) { callStream.getTracks().forEach(t => t.stop()); callStream = null; }
+  if (callPreviewTimer) { clearInterval(callPreviewTimer); callPreviewTimer = null; }
+  if (callFrameTimer) { clearInterval(callFrameTimer); callFrameTimer = null; }
+  if (callAudioProcessor) { callAudioProcessor.disconnect(); callAudioProcessor = null; }
+  if (callAudioSource) { callAudioSource.disconnect(); callAudioSource = null; }
+  if (callAudioCtx) { callAudioCtx.close().catch(() => {}); callAudioCtx = null; }
+  if (callPlaybackTimer) { clearInterval(callPlaybackTimer); callPlaybackTimer = null; }
+  if (callPlaybackCtx) { callPlaybackCtx.close().catch(() => {}); callPlaybackCtx = null; }
+  callJitterBuf = [];
+  callPlaybackSeq = 0;
+  callAudioSeq = 0;
+
+  // Reset delta state
+  prevLocalChars = prevLocalR = prevLocalG = prevLocalB = null;
+  prevRemoteChars = prevRemoteR = prevRemoteG = prevRemoteB = null;
+  prevNetChars = prevNetR = prevNetG = prevNetB = null;
+  remoteRenderCanvas = localRenderCanvas = null;
+  keyframeCounter = 0;
+
+  // Hide UI
+  document.getElementById('call-overlay').classList.add('hidden');
+  document.getElementById('call-incoming').classList.add('hidden');
+  document.getElementById('remote-ascii').innerHTML = '';
+  document.getElementById('local-ascii').innerHTML = '';
+
+  // Show call button again if contact is selected
+  if (activeContact) document.getElementById('call-start-btn').style.display = '';
+}
+
+async function initCallMedia() {
+  callStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  callVideoEl = document.createElement('video');
+  callVideoEl.srcObject = callStream;
+  callVideoEl.muted = true;
+  callVideoEl.play();
+  callCanvas = document.createElement('canvas');
+  callCanvas.width = CALL_WIDTH;
+  callCanvas.height = CALL_HEIGHT;
+  callCtx = callCanvas.getContext('2d', { willReadFrequently: true });
+}
+
+let callPreviewTimer = null;
+
+// ── Delta frame state ────────────────────────────────────────────────────
+// Stores previous frame per-cell so we only send/render cells that changed.
+let prevLocalChars = null;   // Uint8Array [y*w+x] = char index
+let prevLocalR = null;       // Uint8Array [y*w+x] = red
+let prevLocalG = null;
+let prevLocalB = null;
+let prevRemoteChars = null;
+let prevRemoteR = null;
+let prevRemoteG = null;
+let prevRemoteB = null;
+let keyframeCounter = 0;
+const KEYFRAME_INTERVAL = 30; // full frame every N frames (~4s at 8fps)
+const DELTA_THRESHOLD = 12;   // min color distance to count as changed
+
+// ── Canvas-based ASCII renderer (much faster than innerHTML spans) ───────
+// One <canvas> per display, we draw colored chars directly.
+let remoteRenderCanvas = null;
+let localRenderCanvas = null;
+
+function initRenderCanvas(preEl) {
+  const cvs = document.createElement('canvas');
+  cvs.style.cssText = 'width:100%;height:100%;image-rendering:pixelated;';
+  preEl.innerHTML = '';
+  preEl.appendChild(cvs);
+  return cvs;
+}
+
+function renderAsciiToCanvas(cvs, frame, prevChars, prevR, prevG, prevB, forceAll) {
+  const w = frame.w, h = frame.h;
+  const charW = 7, charH = 10; // monospace char cell size in px
+  const pxW = w * charW, pxH = h * charH;
+  if (cvs.width !== pxW || cvs.height !== pxH) {
+    cvs.width = pxW;
+    cvs.height = pxH;
+  }
+  const ctx = cvs.getContext('2d');
+  ctx.font = `${charH}px 'JetBrains Mono', monospace`;
+  ctx.textBaseline = 'top';
+
+  const rampLen = ASCII_CHARS.length;
+  const newChars = new Uint8Array(w * h);
+  const newR = new Uint8Array(w * h);
+  const newG = new Uint8Array(w * h);
+  const newB = new Uint8Array(w * h);
+
+  for (let y = 0; y < h; y++) {
+    const row = frame.c[y];
+    for (let x = 0; x < w; x++) {
+      const ci = x * 3;
+      const r = row[ci], g = row[ci+1], b = row[ci+2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const charIdx = Math.min(Math.floor((lum / 255) * rampLen), rampLen - 1);
+      const idx = y * w + x;
+      newChars[idx] = charIdx;
+      newR[idx] = r; newG[idx] = g; newB[idx] = b;
+
+      // Skip if unchanged (delta)
+      if (!forceAll && prevChars &&
+          prevChars[idx] === charIdx &&
+          Math.abs(prevR[idx] - r) + Math.abs(prevG[idx] - g) + Math.abs(prevB[idx] - b) < DELTA_THRESHOLD) {
+        continue;
+      }
+
+      // Clear cell and draw
+      ctx.fillStyle = '#000';
+      ctx.fillRect(x * charW, y * charH, charW, charH);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillText(ASCII_CHARS[charIdx], x * charW, y * charH);
+    }
+  }
+
+  return { chars: newChars, r: newR, g: newG, b: newB };
+}
+
+function startLocalPreview() {
+  if (callPreviewTimer) clearInterval(callPreviewTimer);
+  // Init canvas renderer for the main (remote) display
+  const remoteEl = document.getElementById('remote-ascii');
+  remoteRenderCanvas = initRenderCanvas(remoteEl);
+  document.getElementById('local-ascii').innerHTML = '';
+  prevRemoteChars = prevRemoteR = prevRemoteG = prevRemoteB = null;
+  keyframeCounter = 0;
+
+  callPreviewTimer = setInterval(() => {
+    if (!callVidOn || !callVideoEl || callVideoEl.readyState < 2) return;
+    const frame = captureRawFrame();
+    const forceKey = (keyframeCounter++ % KEYFRAME_INTERVAL) === 0;
+    const st = renderAsciiToCanvas(remoteRenderCanvas, frame,
+      prevRemoteChars, prevRemoteR, prevRemoteG, prevRemoteB, forceKey);
+    prevRemoteChars = st.chars; prevRemoteR = st.r; prevRemoteG = st.g; prevRemoteB = st.b;
+  }, 1000 / CALL_FPS);
+}
+
+function startMediaStreaming() {
+  const name = handleCache[callPeer] || truncKey(callPeer);
+  document.getElementById('call-peer-label').textContent = `CALL: ${name}`;
+
+  if (callPreviewTimer) { clearInterval(callPreviewTimer); callPreviewTimer = null; }
+
+  // Init canvas for local small preview
+  const localEl = document.getElementById('local-ascii');
+  localRenderCanvas = initRenderCanvas(localEl);
+  // Re-init remote canvas (peer frames incoming)
+  const remoteEl = document.getElementById('remote-ascii');
+  remoteRenderCanvas = initRenderCanvas(remoteEl);
+  prevLocalChars = prevLocalR = prevLocalG = prevLocalB = null;
+  prevRemoteChars = prevRemoteR = prevRemoteG = prevRemoteB = null;
+  keyframeCounter = 0;
+
+  callFrameTimer = setInterval(() => {
+    if (!callVidOn || !callVideoEl || callVideoEl.readyState < 2) return;
+    const frame = captureRawFrame();
+    // Render local preview
+    const forceKey = (keyframeCounter++ % KEYFRAME_INTERVAL) === 0;
+    const st = renderAsciiToCanvas(localRenderCanvas, frame,
+      prevLocalChars, prevLocalR, prevLocalG, prevLocalB, forceKey);
+    prevLocalChars = st.chars; prevLocalR = st.r; prevLocalG = st.g; prevLocalB = st.b;
+    // Build and send the network frame (only changed cells for delta)
+    sendCallPacket(buildNetworkFrame(frame, forceKey));
+  }, 1000 / CALL_FPS);
+
+  startCallAudioCapture();
+  startCallAudioPlayback();
+}
+
+// ── Raw frame capture (pixels + RGB, no ASCII yet — renderer picks chars) ──
+function captureRawFrame() {
+  const sampleH = CALL_HEIGHT * 2;
+  callCanvas.width = CALL_WIDTH;
+  callCanvas.height = sampleH;
+  callCtx.save();
+  callCtx.translate(CALL_WIDTH, 0);
+  callCtx.scale(-1, 1);
+  callCtx.drawImage(callVideoEl, 0, 0, CALL_WIDTH, sampleH);
+  callCtx.restore();
+  const img = callCtx.getImageData(0, 0, CALL_WIDTH, sampleH);
+  const d = img.data;
+  const colors = [];
+  for (let y = 0; y < CALL_HEIGHT; y++) {
+    const colorRow = [];
+    const row1 = y * 2;
+    const row2 = Math.min(row1 + 1, sampleH - 1);
+    for (let x = 0; x < CALL_WIDTH; x++) {
+      const i1 = (row1 * CALL_WIDTH + x) * 4;
+      const i2 = (row2 * CALL_WIDTH + x) * 4;
+      colorRow.push(
+        (d[i1] + d[i2]) >> 1,
+        (d[i1+1] + d[i2+1]) >> 1,
+        (d[i1+2] + d[i2+2]) >> 1
+      );
+    }
+    colors.push(colorRow);
+  }
+  return { w: CALL_WIDTH, h: CALL_HEIGHT, c: colors };
+}
+
+// ── Build network frame with delta encoding ─────────────────────────────
+let prevNetChars = null, prevNetR = null, prevNetG = null, prevNetB = null;
+
+function buildNetworkFrame(frame, forceKeyframe) {
+  const w = frame.w, h = frame.h;
+  const rampLen = ASCII_CHARS.length;
+  const lines = [];
+  const colors = [];
+
+  if (forceKeyframe || !prevNetChars) {
+    // Full keyframe — send everything
+    for (let y = 0; y < h; y++) {
+      let line = '';
+      const colorRow = [];
+      const row = frame.c[y];
+      for (let x = 0; x < w; x++) {
+        const ci = x * 3;
+        const r = row[ci], g = row[ci+1], b = row[ci+2];
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        const charIdx = Math.min(Math.floor((lum / 255) * rampLen), rampLen - 1);
+        line += ASCII_CHARS[charIdx];
+        colorRow.push(r, g, b);
+      }
+      lines.push(line);
+      colors.push(colorRow);
+    }
+    // Store for next delta
+    prevNetChars = new Uint8Array(w * h);
+    prevNetR = new Uint8Array(w * h);
+    prevNetG = new Uint8Array(w * h);
+    prevNetB = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const idx = y * w + x;
+        const ci = x * 3;
+        prevNetR[idx] = frame.c[y][ci];
+        prevNetG[idx] = frame.c[y][ci+1];
+        prevNetB[idx] = frame.c[y][ci+2];
+        const lum = 0.299 * prevNetR[idx] + 0.587 * prevNetG[idx] + 0.114 * prevNetB[idx];
+        prevNetChars[idx] = Math.min(Math.floor((lum / 255) * rampLen), rampLen - 1);
+      }
+    }
+    return { t: 'vf', l: lines, c: colors, w, h, k: 1 }; // k=1 keyframe
+  }
+
+  // Delta frame — only changed cells as sparse patches
+  const patches = []; // [y, x, char, r, g, b]
+  for (let y = 0; y < h; y++) {
+    const row = frame.c[y];
+    for (let x = 0; x < w; x++) {
+      const ci = x * 3;
+      const r = row[ci], g = row[ci+1], b = row[ci+2];
+      const idx = y * w + x;
+      const dist = Math.abs(prevNetR[idx] - r) + Math.abs(prevNetG[idx] - g) + Math.abs(prevNetB[idx] - b);
+      if (dist < DELTA_THRESHOLD) continue;
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const charIdx = Math.min(Math.floor((lum / 255) * rampLen), rampLen - 1);
+      patches.push(y, x, charIdx, r, g, b);
+      prevNetChars[idx] = charIdx;
+      prevNetR[idx] = r; prevNetG[idx] = g; prevNetB[idx] = b;
+    }
+  }
+  return { t: 'vd', p: patches, w, h }; // vd = video delta
+}
+
+// ── Render incoming remote frames (keyframe or delta) ───────────────────
+function renderRemoteFrame(frame) {
+  if (!remoteRenderCanvas) {
+    const el = document.getElementById('remote-ascii');
+    remoteRenderCanvas = initRenderCanvas(el);
+    prevRemoteChars = prevRemoteR = prevRemoteG = prevRemoteB = null;
+  }
+
+  if (frame.t === 'vf') {
+    // Full keyframe
+    const forceKey = true;
+    const st = renderAsciiToCanvas(remoteRenderCanvas, frame,
+      prevRemoteChars, prevRemoteR, prevRemoteG, prevRemoteB, forceKey);
+    prevRemoteChars = st.chars; prevRemoteR = st.r; prevRemoteG = st.g; prevRemoteB = st.b;
+  } else if (frame.t === 'vd') {
+    // Delta patches
+    applyDeltaToCanvas(remoteRenderCanvas, frame);
+  }
+}
+
+function applyDeltaToCanvas(cvs, frame) {
+  const w = frame.w, charW = 7, charH = 10;
+  const ctx = cvs.getContext('2d');
+  ctx.font = `${charH}px 'JetBrains Mono', monospace`;
+  ctx.textBaseline = 'top';
+  const p = frame.p;
+  for (let i = 0; i < p.length; i += 6) {
+    const y = p[i], x = p[i+1], charIdx = p[i+2];
+    const r = p[i+3], g = p[i+4], b = p[i+5];
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x * charW, y * charH, charW, charH);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillText(ASCII_CHARS[charIdx], x * charW, y * charH);
+    if (prevRemoteChars) {
+      const idx = y * w + x;
+      prevRemoteChars[idx] = charIdx;
+      prevRemoteR[idx] = r; prevRemoteG[idx] = g; prevRemoteB[idx] = b;
+    }
+  }
+}
+
+function renderLocalFrame(frame) {
+  // handled by renderAsciiToCanvas in startMediaStreaming
+}
+
+function startCallAudioCapture() {
+  if (!callStream) return;
+  try {
+    callAudioCtx = new AudioContext({ sampleRate: 16000 });
+    callAudioSource = callAudioCtx.createMediaStreamSource(callStream);
+    // ScriptProcessorNode: 960 samples = 60ms at 16kHz
+    callAudioProcessor = callAudioCtx.createScriptProcessor(960, 1, 1);
+    callAudioProcessor.onaudioprocess = (e) => {
+      if (!callMicOn) return;
+      const input = e.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        pcm[i] = Math.max(-32768, Math.min(32767, Math.floor(input[i] * 32767)));
+      }
+      const bytes = new Uint8Array(pcm.buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      sendCallPacket({ t: 'af', seq: callAudioSeq++, d: btoa(binary) });
+    };
+    callAudioSource.connect(callAudioProcessor);
+    callAudioProcessor.connect(callAudioCtx.destination);
+  } catch (e) {
+    console.warn('Audio capture init failed:', e);
+  }
+}
+
+function startCallAudioPlayback() {
+  try {
+    callPlaybackCtx = new AudioContext({ sampleRate: 16000 });
+    callPlaybackTimer = setInterval(() => {
+      while (callJitterBuf.length > 0) {
+        const pkt = callJitterBuf.shift();
+        playAudioChunk(pkt.d);
+      }
+    }, 50);
+  } catch (e) {
+    console.warn('Audio playback init failed:', e);
+  }
+}
+
+function enqueueCallAudio(pkt) {
+  callJitterBuf.push(pkt);
+  // Prevent buffer overflow
+  if (callJitterBuf.length > 10) callJitterBuf.shift();
+}
+
+function playAudioChunk(b64) {
+  if (!callPlaybackCtx) return;
+  try {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const pcm = new Int16Array(bytes.buffer);
+    const floats = new Float32Array(pcm.length);
+    for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768;
+    const buf = callPlaybackCtx.createBuffer(1, floats.length, 16000);
+    buf.getChannelData(0).set(floats);
+    const src = callPlaybackCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(callPlaybackCtx.destination);
+    src.start();
+  } catch (_) {}
+}
+
+// Call button wiring
+document.getElementById('call-start-btn').addEventListener('click', () => {
+  if (!activeContact) return;
+  startCall(activeContact);
+});
+document.getElementById('call-accept-btn').addEventListener('click', acceptCall);
+document.getElementById('call-decline-btn').addEventListener('click', declineCall);
+document.getElementById('call-end-btn').addEventListener('click', endCall);
+document.getElementById('call-mic-btn').addEventListener('click', () => {
+  callMicOn = !callMicOn;
+  document.getElementById('call-mic-btn').textContent = callMicOn ? 'MIC' : 'MIC OFF';
+  document.getElementById('call-mic-btn').classList.toggle('active-ctrl', callMicOn);
+  // Mute/unmute the audio track
+  if (callStream) {
+    callStream.getAudioTracks().forEach(t => { t.enabled = callMicOn; });
+  }
+});
+document.getElementById('call-vid-btn').addEventListener('click', () => {
+  callVidOn = !callVidOn;
+  document.getElementById('call-vid-btn').textContent = callVidOn ? 'VID' : 'VID OFF';
+  document.getElementById('call-vid-btn').classList.toggle('active-ctrl', callVidOn);
+  if (callStream) {
+    callStream.getVideoTracks().forEach(t => { t.enabled = callVidOn; });
+  }
 });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────

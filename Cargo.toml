@@ -44,6 +44,10 @@ tower-http = { version = "0.5", features = ["cors"] }
 # HTTP client (for DNS-over-HTTPS bootstrap)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# crypto (for deterministic seed signing without Veilid node)
+ed25519-dalek = { version = "2", features = ["std"] }
+sha2          = "0.10"
+
 # misc
 hex     = "0.4.3"
 base64  = "0.22.1"

@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod keystore;
 pub mod migrations;
 pub mod repos;

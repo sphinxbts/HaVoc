@@ -133,6 +133,20 @@ impl Thread {
         }
     }
 
+    /// Create a thread with an explicit timestamp (for deterministic seed generation).
+    pub fn create_with_timestamp(
+        title: String,
+        tags: Vec<String>,
+        identity: &crate::Identity,
+        timestamp: i64,
+    ) -> Result<Self, CoreError> {
+        let author_id = identity.author_id();
+        let object_id = Self::compute_id(&author_id, &title, timestamp, &tags)?;
+        let bytes = Self::signable_bytes(&author_id, &title, timestamp, &tags)?;
+        let sig = crate::crypto::sign(&identity.signing_key, &bytes);
+        Ok(Thread::new(author_id, title, timestamp, tags, object_id, sig))
+    }
+
     /// Re-derive signable bytes from this thread's fields.
     pub fn to_signable_bytes(&self) -> Result<Vec<u8>, CoreError> {
         Self::signable_bytes(&self.author_id, &self.title, self.created_at, &self.tags)
@@ -220,6 +234,21 @@ impl Post {
             created_at,
             signature,
         }
+    }
+
+    /// Create a post with an explicit timestamp (for deterministic seed generation).
+    pub fn create_with_timestamp(
+        thread_id: String,
+        parent_id: Option<String>,
+        body: String,
+        identity: &crate::Identity,
+        timestamp: i64,
+    ) -> Result<Self, CoreError> {
+        let author_id = identity.author_id();
+        let object_id = Self::compute_id(&author_id, &thread_id, parent_id.as_deref(), &body, timestamp)?;
+        let bytes = Self::signable_bytes(&author_id, &thread_id, parent_id.as_deref(), &body, timestamp)?;
+        let sig = crate::crypto::sign(&identity.signing_key, &bytes);
+        Ok(Post::new(author_id, thread_id, parent_id, body, timestamp, object_id, sig))
     }
 
     pub fn to_signable_bytes(&self) -> Result<Vec<u8>, CoreError> {
@@ -421,6 +450,10 @@ pub struct DirectMessage {
 pub struct DmPayload {
     pub body: String,
     pub sent_at: i64,
+    /// If present, this is a real-time call packet (video frame, audio chunk,
+    /// or signaling) rather than a stored text message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_packet: Option<serde_json::Value>,
 }
 
 // ─── HvocObject sum type ─────────────────────────────────────────────────────
@@ -561,7 +594,7 @@ mod tests {
 
     #[test]
     fn dm_payload_serde_roundtrip() {
-        let payload = DmPayload { body: "secret message".into(), sent_at: 12345 };
+        let payload = DmPayload { body: "secret message".into(), sent_at: 12345, call_packet: None };
         let json = serde_json::to_string(&payload).unwrap();
         let back: DmPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(back.body, "secret message");

@@ -91,6 +91,11 @@ impl HvocNode {
         self.sync_tx.subscribe()
     }
 
+    /// Broadcast a sync event to all subscribers (WebSocket clients, etc.).
+    pub fn broadcast_sync(&self, event: SyncEvent) {
+        let _ = self.sync_tx.send(event);
+    }
+
     pub fn routing_context(&self) -> Result<veilid_core::RoutingContext, VeilidError> {
         Ok(self.api.routing_context()?)
     }
