@@ -1198,7 +1198,7 @@ const dbAPI = {
   async unlockUser(authorId, passphrase) {
     const r = await api('POST', '/api/identity/unlock', { author_id: authorId, passphrase });
     if (r.error) throw new Error(r.error);
-    return { publicKey: r.author_id, handle: authorId };
+    return { publicKey: r.author_id, handle: r.handle || authorId };
   },
   async listIdentities() {
     const r = await api('GET', '/api/identity/list');

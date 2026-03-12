@@ -27,7 +27,18 @@ pub async fn get_identity(
 ) -> Json<serde_json::Value> {
     let author_id = state.author_id.read().await;
     match author_id.as_ref() {
-        Some(id) => Json(serde_json::json!({ "author_id": id })),
+        Some(id) => {
+            // Look up the handle from the keystore.
+            let ks = hvoc_store::Keystore(&state.store);
+            let handle = match ks.list_ids().await {
+                Ok(ids) => ids.iter().find(|i| i.id == *id).map(|i| i.handle.clone()),
+                Err(_) => None,
+            };
+            Json(serde_json::json!({
+                "author_id": id,
+                "handle": handle.unwrap_or_default(),
+            }))
+        }
         None => Json(serde_json::json!({ "error": "no active identity" })),
     }
 }
@@ -108,19 +119,42 @@ pub async fn unlock_identity(
         veilid_core::KeyPair::new(veilid_core::CRYPTO_KIND_VLD0, bare_kp)
     };
 
+    // Validate the keypair by attempting a test sign+verify.
+    let kp_ref = &kp;
+    let valid = state.node.with_crypto(|cs| -> Result<bool, hvoc_veilid::VeilidError> {
+        let test_data = b"hvoc-keypair-validation";
+        let pub_key = kp_ref.key();
+        let secret_key = kp_ref.secret();
+        match cs.sign(&pub_key, &secret_key, test_data) {
+            Ok(_sig) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    });
+    if !matches!(valid, Ok(true)) {
+        return Json(serde_json::json!({ "error": "wrong passphrase or corrupt keypair" }));
+    }
+
     let author_id = hvoc_veilid::crypto::author_id_from_key(&kp.key());
 
     *state.keypair.write().await = Some(kp);
     *state.author_id.write().await = Some(author_id.clone());
 
+    // Look up the handle from keystore.
+    let handle = match ks.list_ids().await {
+        Ok(ids) => ids.iter().find(|i| i.id == req.author_id).map(|i| i.handle.clone()),
+        Err(_) => None,
+    };
+
     // Set up inbox route in background.
     let state_clone = state.clone();
     tokio::spawn(async move {
+        super::profile::publish_profile(&state_clone).await;
         setup_inbox_route(&state_clone).await;
     });
 
     Json(serde_json::json!({
         "author_id": author_id,
+        "handle": handle.unwrap_or_default(),
         "status": "unlocked",
     }))
 }
