@@ -4,8 +4,14 @@
 # Usage:
 #   bash scripts/build-release.sh
 #
+# Environment:
+#   TARGET  — override target triple (auto-detected if not set)
+#   MACOS_APP — set to "1" to also create .app bundle + DMG (macOS only)
+#
 # Output:
 #   dist/hvoc-<target>.zip   — binary + frontend + README
+#   HaVoc.app                — macOS app bundle (if MACOS_APP=1)
+#   HaVoc-*.dmg              — macOS DMG installer (if MACOS_APP=1)
 
 set -euo pipefail
 
@@ -18,17 +24,26 @@ echo "Target: $TARGET"
 # Build release binary
 echo ""
 echo "Building release binary..."
-cargo build --release --package hvoc-cli
+cargo build --release --target "$TARGET" --package hvoc-cli
 
 # Determine binary name
 if [[ "$TARGET" == *"windows"* ]]; then
-  BIN="target/release/hvoc-cli.exe"
+  BIN="target/$TARGET/release/hvoc-cli.exe"
 else
-  BIN="target/release/hvoc-cli"
+  BIN="target/$TARGET/release/hvoc-cli"
 fi
 
 if [[ ! -f "$BIN" ]]; then
-  echo "ERROR: binary not found at $BIN"
+  # Fall back to default target directory
+  if [[ "$TARGET" == *"windows"* ]]; then
+    BIN="target/release/hvoc-cli.exe"
+  else
+    BIN="target/release/hvoc-cli"
+  fi
+fi
+
+if [[ ! -f "$BIN" ]]; then
+  echo "ERROR: binary not found"
   exit 1
 fi
 
@@ -66,6 +81,20 @@ echo ""
 echo "=== Build Complete ==="
 echo "Binary:  $BIN"
 echo "Package: $ARCHIVE"
+
+# ── macOS .app bundle + DMG ──
+if [[ "${MACOS_APP:-0}" == "1" && "$TARGET" == *"apple-darwin"* ]]; then
+  echo ""
+  echo "=== Creating macOS .app bundle ==="
+
+  VERSION=$(grep '^version' hvoc-cli/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+  bash scripts/create-macos-app.sh "$BIN" hvoc.html "$VERSION"
+
+  echo ""
+  echo "=== Creating DMG installer ==="
+  bash scripts/create-dmg.sh HaVoc.app "HaVoc-v${VERSION}-macOS-$(uname -m).dmg"
+fi
+
 echo ""
 echo "To run:"
 echo "  1. Extract the archive"

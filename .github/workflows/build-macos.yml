@@ -1,0 +1,168 @@
+name: Build macOS
+
+# Manual trigger — build macOS binaries without creating a release
+on:
+  workflow_dispatch:
+    inputs:
+      build_dmg:
+        description: 'Create DMG installer'
+        required: false
+        default: true
+        type: boolean
+      build_universal:
+        description: 'Build Universal binary (Intel + Apple Silicon)'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-intel:
+    name: Build (Intel x86_64)
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Install protobuf
+        run: brew install protobuf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-x86_64
+
+      - name: Build
+        run: cargo build --release --target x86_64-apple-darwin -p hvoc-cli
+
+      - name: Rename binary
+        run: cp target/x86_64-apple-darwin/release/hvoc-cli hvoc-macos-x86_64
+
+      - name: Upload Intel binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: hvoc-macos-x86_64
+          path: hvoc-macos-x86_64
+
+  build-arm:
+    name: Build (Apple Silicon arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install protobuf
+        run: brew install protobuf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-arm64
+
+      - name: Build
+        run: cargo build --release --target aarch64-apple-darwin -p hvoc-cli
+
+      - name: Rename binary
+        run: cp target/aarch64-apple-darwin/release/hvoc-cli hvoc-macos-arm64
+
+      - name: Upload ARM binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: hvoc-macos-arm64
+          path: hvoc-macos-arm64
+
+  package:
+    name: Package macOS app
+    needs: [build-intel, build-arm]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Intel binary
+        uses: actions/download-artifact@v4
+        with:
+          name: hvoc-macos-x86_64
+          path: binaries/
+
+      - name: Download ARM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: hvoc-macos-arm64
+          path: binaries/
+
+      - name: Create Universal binary
+        if: ${{ inputs.build_universal }}
+        run: |
+          chmod +x binaries/hvoc-macos-x86_64 binaries/hvoc-macos-arm64
+          lipo -create \
+            binaries/hvoc-macos-x86_64 \
+            binaries/hvoc-macos-arm64 \
+            -output binaries/hvoc-universal
+          echo "Universal binary architectures:"
+          lipo -info binaries/hvoc-universal
+
+      - name: Use single-arch binary if not universal
+        if: ${{ !inputs.build_universal }}
+        run: |
+          chmod +x binaries/hvoc-macos-arm64
+          cp binaries/hvoc-macos-arm64 binaries/hvoc-universal
+
+      - name: Get short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create .app bundle
+        run: |
+          chmod +x scripts/create-macos-app.sh
+          bash scripts/create-macos-app.sh \
+            binaries/hvoc-universal \
+            hvoc.html \
+            "dev-${{ steps.sha.outputs.short }}"
+
+      - name: Create DMG
+        if: ${{ inputs.build_dmg }}
+        run: |
+          chmod +x scripts/create-dmg.sh
+          bash scripts/create-dmg.sh \
+            "HaVoc.app" \
+            "HaVoc-dev-${{ steps.sha.outputs.short }}-macOS.dmg"
+
+      - name: Zip .app bundle
+        run: zip -r "HaVoc-dev-${{ steps.sha.outputs.short }}-macOS.app.zip" HaVoc.app
+
+      - name: Upload .app zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: HaVoc-macOS-app
+          path: "HaVoc-dev-*.app.zip"
+
+      - name: Upload DMG
+        if: ${{ inputs.build_dmg }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: HaVoc-macOS-dmg
+          path: "HaVoc-dev-*.dmg"
+
+      - name: Summary
+        run: |
+          echo "## macOS Build Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Artifact | Description |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| \`hvoc-macos-x86_64\` | Intel binary |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| \`hvoc-macos-arm64\` | Apple Silicon binary |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ inputs.build_universal }}" = "true" ]; then
+            echo "| \`HaVoc-macOS-app\` | Universal .app bundle (zip) |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${{ inputs.build_dmg }}" = "true" ]; then
+            echo "| \`HaVoc-macOS-dmg\` | DMG installer |" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -4,6 +4,45 @@ Rust workspace mapping the browser prototype to a real distributed system.
 
 ---
 
+## Downloads
+
+Pre-built binaries are available on the [Releases page](../../releases).
+
+| Platform | File | Notes |
+|----------|------|-------|
+| **macOS (Universal)** | `HaVoc-*-macOS-Universal.dmg` | Intel + Apple Silicon, drag-to-install |
+| **macOS (Universal)** | `HaVoc-*-macOS-Universal.app.zip` | Alternative: unzip and run |
+| **Linux (x86_64)** | `hvoc-linux-x86_64` | Standalone binary |
+| **Windows (x86_64)** | `hvoc-windows-x86_64.exe` | Standalone binary |
+
+---
+
+## macOS Installation
+
+### Option 1: DMG Installer (Recommended)
+1. Download `HaVoc-*-macOS-Universal.dmg` from [Releases](../../releases)
+2. Open the DMG
+3. Drag **HaVoc.app** into **Applications**
+4. **First run:** Right-click HaVoc.app → "Open" → click "Open" in the security dialog
+   - Or run in Terminal: `xattr -cr /Applications/HaVoc.app`
+5. Double-click HaVoc.app — the server starts and the UI opens automatically
+
+### Option 2: Standalone Binary
+```bash
+# Download the binary for your architecture
+curl -LO https://github.com/sphinxbts/HaVoc/releases/latest/download/hvoc-macos-arm64
+chmod +x hvoc-macos-arm64
+./hvoc-macos-arm64 serve
+# Open hvoc.html in your browser
+```
+
+### macOS Troubleshooting
+- **"App is damaged"**: Run `xattr -cr /path/to/HaVoc.app` or `xattr -cr ./hvoc-macos-*`
+- **"Cannot be opened because the developer cannot be verified"**: Right-click → Open → Open
+- **Port already in use**: `lsof -ti:7734 | xargs kill -9` then relaunch
+
+---
+
 ## Architecture
 
 ```
@@ -25,17 +64,18 @@ hvoc-cli       CLI entrypoint + serve command
 
 ## DHT Key Schema
 
-| Logical key | Content | Schema |
-|---|---|---|
-| `profile:<author_id>` | Signed Profile JSON | DFLT(1), subkey 0 |
-| `thread:<thread_id>` | Thread header + post index | DFLT(2), subkeys 0-1 |
-| `post:<post_id>` | Signed Post body | DFLT(1), subkey 0 |
-| `inbox:<author_id>` | Private route blob for DM delivery | DFLT(1), subkey 0 |
-| `board:default` | Board index (array of thread entries) | DFLT(1), subkey 0 |
+| Logical key            | Content                        | Schema              |
+|------------------------|--------------------------------|---------------------|
+| `profile:<author_id>`  | Signed Profile JSON            | DFLT(1), subkey 0   |
+| `thread:<thread_id>`   | Thread header + post index     | DFLT(2), subkeys 0-1|
+| `post:<post_id>`       | Signed Post body               | DFLT(1), subkey 0   |
+| `inbox:<author_id>`    | Private route blob for DM delivery | DFLT(1), subkey 0|
+| `board:default`        | Board index (array of thread entries) | DFLT(1), subkey 0|
 
 ## Object Model
 
 Every network object is:
+
 1. Canonically serialised (JSON with keys sorted lexicographically)
 2. Content-addressed: `object_id = BLAKE3(canonical_bytes_without_signature)`
 3. Ed25519-signed by the author
@@ -63,12 +103,16 @@ Delivered via: Veilid AppMessage → recipient's private route (from inbox DHT r
 - **QR invites**: Generate/scan QR codes to share identity and add contacts
 - **Handle resolution**: Display names instead of truncated public keys
 - **Notifications**: Desktop notifications for incoming DMs
+- **Video chat**: E2E encrypted ASCII webcam + audio streaming in DMs
 
-## Build
+## Build from Source
 
 ```bash
-# Requirements: Rust 1.76+, cargo
-cargo build
+# Requirements: Rust 1.76+, cargo, protobuf compiler
+# macOS: brew install protobuf
+# Linux: apt install protobuf-compiler
+
+cargo build --release -p hvoc-cli
 
 # Run the API server
 cargo run -p hvoc-cli -- serve
@@ -81,28 +125,60 @@ cargo run -p hvoc-cli -- post list --thread <id>
 # Open hvoc.html in a browser to use the web UI (connects to localhost:7734)
 ```
 
+### Build macOS .app + DMG locally
+
+```bash
+# Build release binary
+cargo build --release -p hvoc-cli
+
+# Create .app bundle
+bash scripts/create-macos-app.sh target/release/hvoc-cli hvoc.html v0.1.0
+
+# Create DMG installer
+bash scripts/create-dmg.sh HaVoc.app HaVoc-v0.1.0-macOS.dmg
+
+# Or use the all-in-one script:
+MACOS_APP=1 bash scripts/build-release.sh
+```
+
+## CI/CD
+
+The project uses GitHub Actions for automated builds:
+
+- **`release.yml`**: Triggered on tag push (`v*`) or manual dispatch. Builds for Linux, Windows, and macOS (Intel + Apple Silicon). Creates a Universal binary, `.app` bundle, and `.dmg` installer. Publishes everything as a GitHub Release.
+
+- **`build-macos.yml`**: Manual workflow for macOS-only builds. Useful for testing without creating a release.
+
+### Creating a Release
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+# GitHub Actions will build all platforms and create a release
+```
+
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/identity` | Get active identity |
-| POST | `/api/identity` | Create identity (handle + passphrase) |
-| POST | `/api/identity/unlock` | Unlock existing identity |
-| GET | `/api/identity/list` | List all local identities |
-| GET | `/api/threads?limit=N&offset=N` | List threads (paginated) |
-| POST | `/api/threads` | Create thread (title + body + tags) |
-| GET | `/api/threads/{id}` | Get thread details |
-| GET | `/api/threads/{id}/posts` | List posts in thread |
-| POST | `/api/threads/{id}/posts` | Create post / reply |
-| DELETE | `/api/threads/{id}` | Tombstone a thread (author only) |
-| DELETE | `/api/posts/{id}` | Tombstone a post (author only) |
-| GET | `/api/messages?peer_id=X` | List messages (optionally filtered by peer) |
-| POST | `/api/messages` | Send encrypted DM |
-| GET | `/api/contacts` | List contacts |
-| POST | `/api/contacts` | Add contact (via invite) |
-| GET | `/api/profiles/{author_id}` | Get profile |
-| POST | `/api/profiles/resolve` | Batch resolve handles |
-| GET | `/ws` | WebSocket for live sync events |
+| Method | Path                        | Description                                      |
+|--------|-----------------------------|--------------------------------------------------|
+| GET    | `/api/identity`             | Get active identity                              |
+| POST   | `/api/identity`             | Create identity (handle + passphrase)            |
+| POST   | `/api/identity/unlock`      | Unlock existing identity                         |
+| GET    | `/api/identity/list`        | List all local identities                        |
+| GET    | `/api/threads?limit=N&offset=N` | List threads (paginated)                    |
+| POST   | `/api/threads`              | Create thread (title + body + tags)              |
+| GET    | `/api/threads/{id}`         | Get thread details                               |
+| GET    | `/api/threads/{id}/posts`   | List posts in thread                             |
+| POST   | `/api/threads/{id}/posts`   | Create post / reply                              |
+| DELETE | `/api/threads/{id}`         | Tombstone a thread (author only)                 |
+| DELETE | `/api/posts/{id}`           | Tombstone a post (author only)                   |
+| GET    | `/api/messages?peer_id=X`   | List messages (optionally filtered by peer)      |
+| POST   | `/api/messages`             | Send encrypted DM                                |
+| GET    | `/api/contacts`             | List contacts                                    |
+| POST   | `/api/contacts`             | Add contact (via invite)                         |
+| GET    | `/api/profiles/{author_id}` | Get profile                                      |
+| POST   | `/api/profiles/resolve`     | Batch resolve handles                            |
+| GET    | `/ws`                       | WebSocket for live sync events                   |
 
 ## Testing
 

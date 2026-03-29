@@ -4,21 +4,48 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
+          # ── Linux ──
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: hvoc-linux-x86_64
+            binary_ext: ""
+
+          # ── Windows ──
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: hvoc-windows-x86_64.exe
+            artifact: hvoc-windows-x86_64
+            binary_ext: ".exe"
+
+          # ── macOS Intel ──
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: hvoc-macos-x86_64
+            binary_ext: ""
+
+          # ── macOS Apple Silicon ──
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: hvoc-macos-arm64
+            binary_ext: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -29,24 +56,106 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Protobuf compiler needed by veilid-core on some platforms
+      - name: Install protobuf compiler (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install protobuf compiler (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p hvoc-cli
 
-      - name: Rename binary (Linux)
-        if: runner.os == 'Linux'
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
         run: cp target/${{ matrix.target }}/release/hvoc-cli ${{ matrix.artifact }}
 
       - name: Rename binary (Windows)
         if: runner.os == 'Windows'
-        run: cp target/${{ matrix.target }}/release/hvoc-cli.exe ${{ matrix.artifact }}
+        run: cp target/${{ matrix.target }}/release/hvoc-cli.exe ${{ matrix.artifact }}.exe
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}${{ matrix.binary_ext }}
 
-  release:
+  # ── Create macOS Universal binary + .app bundle + .dmg ──
+  package-macos:
     needs: build
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download macOS Intel binary
+        uses: actions/download-artifact@v4
+        with:
+          name: hvoc-macos-x86_64
+          path: binaries/
+
+      - name: Download macOS ARM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: hvoc-macos-arm64
+          path: binaries/
+
+      - name: Create Universal binary
+        run: |
+          chmod +x binaries/hvoc-macos-x86_64 binaries/hvoc-macos-arm64
+          lipo -create \
+            binaries/hvoc-macos-x86_64 \
+            binaries/hvoc-macos-arm64 \
+            -output binaries/hvoc-universal
+          echo "Universal binary architectures:"
+          lipo -info binaries/hvoc-universal
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create .app bundle
+        run: |
+          chmod +x scripts/create-macos-app.sh
+          bash scripts/create-macos-app.sh \
+            binaries/hvoc-universal \
+            hvoc.html \
+            "${{ steps.version.outputs.tag }}"
+
+      - name: Create DMG
+        run: |
+          chmod +x scripts/create-dmg.sh
+          bash scripts/create-dmg.sh \
+            "HaVoc.app" \
+            "HaVoc-${{ steps.version.outputs.tag }}-macOS-Universal.dmg"
+
+      - name: Also zip the .app
+        run: |
+          zip -r "HaVoc-${{ steps.version.outputs.tag }}-macOS-Universal.app.zip" HaVoc.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hvoc-macos-universal-dmg
+          path: "HaVoc-${{ steps.version.outputs.tag }}-macOS-Universal.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hvoc-macos-universal-app
+          path: "HaVoc-${{ steps.version.outputs.tag }}-macOS-Universal.app.zip"
+
+  # ── GitHub Release ──
+  release:
+    needs: [build, package-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -54,8 +163,34 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: List release artifacts
+        run: find artifacts -type f | head -20
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           files: artifacts/*
           generate_release_notes: true
+          body: |
+            ## HaVoc — Veilid P2P Forum + Messaging
+
+            ### Downloads
+            | Platform | File | Notes |
+            |----------|------|-------|
+            | **macOS (Universal)** | `HaVoc-*-macOS-Universal.dmg` | Intel + Apple Silicon, drag-to-install |
+            | **macOS (Universal)** | `HaVoc-*-macOS-Universal.app.zip` | Unzip and run |
+            | **macOS (Intel only)** | `hvoc-macos-x86_64` | Standalone binary |
+            | **macOS (ARM only)** | `hvoc-macos-arm64` | Standalone binary |
+            | **Linux (x86_64)** | `hvoc-linux-x86_64` | Standalone binary |
+            | **Windows (x86_64)** | `hvoc-windows-x86_64.exe` | Standalone binary |
+
+            ### macOS First Run
+            Since the app is not signed with an Apple Developer certificate, macOS may block it.
+            **To open:** Right-click the app → "Open" → click "Open" in the dialog.
+            Or run: `xattr -cr /Applications/HaVoc.app`
+
+            ### Usage
+            1. Install/extract the binary for your platform
+            2. Run `hvoc-cli serve` (or open the .app on macOS)
+            3. The web UI opens automatically at `http://127.0.0.1:7734`
