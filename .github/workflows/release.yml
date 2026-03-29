@@ -35,14 +35,14 @@ jobs:
             artifact: hvoc-windows-x86_64
             binary_ext: ".exe"
 
-          # ── macOS Intel ──
-          - os: macos-13
+          # ── macOS Intel (cross-compile on ARM runner) ──
+          - os: macos-15
             target: x86_64-apple-darwin
             artifact: hvoc-macos-x86_64
             binary_ext: ""
 
           # ── macOS Apple Silicon ──
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             artifact: hvoc-macos-arm64
             binary_ext: ""
@@ -50,7 +50,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -81,7 +81,7 @@ jobs:
         if: runner.os == 'Windows'
         run: cp target/${{ matrix.target }}/release/hvoc-cli.exe ${{ matrix.artifact }}.exe
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}${{ matrix.binary_ext }}
@@ -89,18 +89,18 @@ jobs:
   # ── Create macOS Universal binary + .app bundle + .dmg ──
   package-macos:
     needs: build
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download macOS Intel binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: hvoc-macos-x86_64
           path: binaries/
 
       - name: Download macOS ARM binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: hvoc-macos-arm64
           path: binaries/
@@ -143,12 +143,12 @@ jobs:
         run: |
           zip -r "HaVoc-${{ steps.version.outputs.tag }}-macOS-Universal.app.zip" HaVoc.app
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: hvoc-macos-universal-dmg
           path: "HaVoc-${{ steps.version.outputs.tag }}-macOS-Universal.dmg"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: hvoc-macos-universal-app
           path: "HaVoc-${{ steps.version.outputs.tag }}-macOS-Universal.app.zip"
@@ -158,7 +158,7 @@ jobs:
     needs: [build, package-macos]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
