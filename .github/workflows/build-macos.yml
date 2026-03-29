@@ -41,6 +41,8 @@ jobs:
 
       - name: Build
         run: cargo build --release --target x86_64-apple-darwin -p hvoc-cli
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       - name: Rename binary
         run: cp target/x86_64-apple-darwin/release/hvoc-cli hvoc-macos-x86_64
@@ -70,6 +72,8 @@ jobs:
 
       - name: Build
         run: cargo build --release --target aarch64-apple-darwin -p hvoc-cli
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       - name: Rename binary
         run: cp target/aarch64-apple-darwin/release/hvoc-cli hvoc-macos-arm64

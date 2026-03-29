@@ -72,6 +72,8 @@ jobs:
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p hvoc-cli
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'
