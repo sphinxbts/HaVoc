@@ -77,42 +77,18 @@ hdiutil create \
   2>/dev/null
 
 # ── Mount and customise ──
-MOUNT_DIR=$(hdiutil attach -readwrite -noverify "$DMG_TEMP" 2>/dev/null | \
-  grep "/Volumes/" | awk '{print $NF}')
+MOUNT_OUTPUT=$(hdiutil attach -readwrite -noverify "$DMG_TEMP" 2>&1)
+MOUNT_DIR=$(echo "$MOUNT_OUTPUT" | grep -o '/Volumes/.*' | head -1)
 
 if [ -n "$MOUNT_DIR" ]; then
   echo "Mounted at: $MOUNT_DIR"
 
-  # Set DMG window appearance via AppleScript (if running interactively)
-  # This positions the icons nicely for drag-to-install
-  osascript << APPLESCRIPT 2>/dev/null || true
-tell application "Finder"
-  tell disk "$VOL_NAME"
-    open
-    set current view of container window to icon view
-    set toolbar visible of container window to false
-    set statusbar visible of container window to false
-    set bounds of container window to {100, 100, 640, 420}
-    set viewOptions to the icon view options of container window
-    set arrangement of viewOptions to not arranged
-    set icon size of viewOptions to 96
-    set position of item "$APP_NAME.app" of container window to {140, 160}
-    set position of item "Applications" of container window to {400, 160}
-    set position of item "README.txt" of container window to {270, 300}
-    close
-    open
-    update without registering applications
-    delay 2
-  end tell
-end tell
-APPLESCRIPT
-
-  # Set custom background color (dark)
-  # Unfortunately pure CLI can't easily set background without an image
-
-  # Unmount
+  # Unmount cleanly before conversion
   sync
-  hdiutil detach "$MOUNT_DIR" 2>/dev/null || true
+  sleep 1
+  hdiutil detach "$MOUNT_DIR" -force 2>/dev/null || \
+    hdiutil detach "$MOUNT_DIR" 2>/dev/null || true
+  sleep 1
 fi
 
 # ── Convert to compressed read-only DMG ──
@@ -121,8 +97,7 @@ rm -f "$OUTPUT_DMG"
 hdiutil convert "$DMG_TEMP" \
   -format UDZO \
   -imagekey zlib-level=9 \
-  -o "$OUTPUT_DMG" \
-  2>/dev/null
+  -o "$OUTPUT_DMG"
 
 rm -f "$DMG_TEMP"
 rm -rf "$STAGING_DIR"
