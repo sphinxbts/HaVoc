@@ -36,13 +36,13 @@ jobs:
             binary_ext: ".exe"
 
           # ── macOS Intel (cross-compile on ARM runner) ──
-          - os: macos-15
+          - os: macos-26
             target: x86_64-apple-darwin
             artifact: hvoc-macos-x86_64
             binary_ext: ""
 
           # ── macOS Apple Silicon ──
-          - os: macos-15
+          - os: macos-26
             target: aarch64-apple-darwin
             artifact: hvoc-macos-arm64
             binary_ext: ""
@@ -89,7 +89,7 @@ jobs:
   # ── Create macOS Universal binary + .app bundle + .dmg ──
   package-macos:
     needs: build
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 

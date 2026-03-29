@@ -24,7 +24,7 @@ env:
 jobs:
   build-intel:
     name: Build (Intel x86_64)
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 
@@ -53,7 +53,7 @@ jobs:
 
   build-arm:
     name: Build (Apple Silicon arm64)
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 
@@ -83,7 +83,7 @@ jobs:
   package:
     name: Package macOS app
     needs: [build-intel, build-arm]
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
 

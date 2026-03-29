@@ -124,7 +124,7 @@ cat > "$APP_DIR/Contents/Info.plist" << PLIST
     <string>AppIcon</string>
 
     <key>LSMinimumSystemVersion</key>
-    <string>12.0</string>
+    <string>26.0</string>
 
     <key>NSHighResolutionCapable</key>
     <true/>
